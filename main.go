@@ -55,8 +55,9 @@ func main() {
 	clearTerminal()
 
 	start := verifyKey(passKey)
-	if start == "" {
+	if start.IsZero() {
 		createKey(now, passKey)
+		start = now
 	}
 
 	entries := setupEntries(now)
@@ -65,21 +66,23 @@ func main() {
 	// READ PAST ENTRIES
 	pPrint("Popup-Diary", bwhite+blink)
 	for i, entry := range entries {
-		randomIndex, err := rand.Int(rand.Reader, big.NewInt(12))
-		if err != nil {
-			log.Fatalf("Error creating random int: %v", err)
-		}
-		entryTime := entry.time.Format("2006-01-02")
-		if b, err := os.ReadFile(entryTime + ".txt"); err == nil {
-			pPrint("\n"+entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
-			for _, line := range strings.Split(string(b), "\n") {
-				if ds, err := decryptString(line, passKey); err == nil {
-					printLine(ds)
-				}
+		if start.Before(entry.time) {
+			randomIndex, err := rand.Int(rand.Reader, big.NewInt(12))
+			if err != nil {
+				log.Fatalf("Error creating random int: %v", err)
 			}
-		} else {
-			if i == 11 {
-				pPrint(entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
+			entryTime := entry.time.Format("2006-01-02")
+			if b, err := os.ReadFile(entryTime + ".txt"); err == nil {
+				pPrint("\n"+entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
+				for _, line := range strings.Split(string(b), "\n") {
+					if ds, err := decryptString(line, passKey); err == nil {
+						printLine(ds)
+					}
+				}
+			} else {
+				if i == 11 {
+					pPrint(entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
+				}
 			}
 		}
 	}
@@ -185,17 +188,21 @@ func createKey(now time.Time, passKey string) {
 	}
 }
 
-func verifyKey(passKey string) string {
+func verifyKey(passKey string) time.Time {
 	if b, err := os.ReadFile("start.txt"); err == nil {
 		if ds, err := decryptString(string(b), passKey); err == nil {
 			absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
 			if absRegex.MatchString(ds) {
-				return string(ds)
+				then, err := time.Parse("2006-01-02", string(ds))
+				if err != nil {
+					log.Fatalf("Error parsing start time: %v", err)
+				}
+				return then
 			}
 		}
 		os.Exit(1)
 	}
-	return ""
+	return time.Time{}
 }
 
 func decryptString(cryptoText string, keyString string) (plainTextString string, err error) {
