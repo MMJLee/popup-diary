@@ -45,19 +45,25 @@ type Entry struct {
 
 func main() {
 	now := time.Now()
-	clearTerminal()
 
+	clearTerminal()
+	pPrint("Popup-Diary - please enter your pass key\n", bwhite+blink)
 	pPrint("> ", bwhite+blink)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
-	passkey := strings.TrimSpace(scanner.Text())
-
+	passKey := strings.TrimSpace(scanner.Text())
 	clearTerminal()
+
+	start := verifyKey(passKey)
+	if start == "" {
+		createKey(now, passKey)
+	}
 
 	entries := setupEntries(now)
 	colors := [12]string{red, green, yellow, blue, magenta, cyan, bred, bgreen, byellow, bblue, bmagenta, bcyan}
 
 	// READ PAST ENTRIES
+	pPrint("Popup-Diary", bwhite+blink)
 	for i, entry := range entries {
 		randomIndex, err := rand.Int(rand.Reader, big.NewInt(12))
 		if err != nil {
@@ -65,10 +71,10 @@ func main() {
 		}
 		entryTime := entry.time.Format("2006-01-02")
 		if b, err := os.ReadFile(entryTime + ".txt"); err == nil {
-			pPrint(entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
+			pPrint("\n"+entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
 			for _, line := range strings.Split(string(b), "\n") {
-				if db, err := decryptString(line, passkey); err == nil {
-					printLine(db)
+				if ds, err := decryptString(line, passKey); err == nil {
+					printLine(ds)
 				}
 			}
 		} else {
@@ -100,14 +106,20 @@ func main() {
 		message := scanner.Text()
 		if strings.TrimSpace(message) == "" {
 			break
+		} else if strings.ToUpper(message) == "HELP" {
+			pPrint("\nenter on a new line to exit", bwhite)
+			pPrint("\nYYYY-MM-DD ex: 2024-04-20 for absolute search", bwhite)
+			pPrint("\n##dD/wW/mM/yY ex: 24D, 3M for relative search", bwhite)
+			pPrint("\nrelative search can be chained ex: 2W2D, evaluated left to right", bwhite)
+			pPrint("\ndelete all text files in directory to restart your diary\n", bwhite)
 		} else if absRegex.MatchString(message) { // GET ENTRY BY ABSOLUTE TIME
 			t := calculateTimeToken(now, message)
 			if b, err := os.ReadFile(message + ".txt"); err == nil {
 				pPrint("\n"+message+" ("+t+")\n", colors[randomIndex.Int64()])
 				lines := strings.Split(string(b), "\n")
 				for _, line := range lines {
-					if db, err := decryptString(line, passkey); err == nil {
-						printLine(db)
+					if ds, err := decryptString(line, passKey); err == nil {
+						printLine(ds)
 					}
 				}
 			}
@@ -116,12 +128,12 @@ func main() {
 			if b, err := os.ReadFile(t + ".txt"); err == nil {
 				pPrint("\n"+t+" ("+strings.ToUpper(message)+")\n", colors[randomIndex.Int64()])
 				for _, line := range strings.Split(string(b), "\n") {
-					if db, err := decryptString(line, passkey); err == nil {
-						printLine(db)
+					if ds, err := decryptString(line, passKey); err == nil {
+						printLine(ds)
 					}
 				}
 			}
-		} else if eb, err := encryptString(msgTime+message, passkey); err == nil { // WRITE TO FILE
+		} else if eb, err := encryptString(msgTime+message, passKey); err == nil { // WRITE TO FILE
 			if _, err = file.WriteString(eb + "\n"); err != nil {
 				log.Fatalf("Error writing to file: %v", err)
 			}
@@ -160,6 +172,32 @@ func setupEntries(now time.Time) [12]Entry {
 	return [12]Entry{fiftyYearsAgo, thirtyYearsAgo, twentyYearsAgo, tenYearsAgo, fiveYearsAgo, threeYearsAgo, twoYearsAgo, oneYearAgo, oneMonthAgo, oneWeekAgo, yesterday, today}
 }
 
+func createKey(now time.Time, passKey string) {
+	file, err := os.OpenFile("start.txt", os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Error opening file: %v", err)
+	}
+	defer file.Close()
+	if eb, err := encryptString(now.Format("2006-01-02"), passKey); err == nil { // WRITE TO FILE
+		if _, err = file.WriteString(eb + "\n"); err != nil {
+			log.Fatalf("Error writing to file: %v", err)
+		}
+	}
+}
+
+func verifyKey(passKey string) string {
+	if b, err := os.ReadFile("start.txt"); err == nil {
+		if ds, err := decryptString(string(b), passKey); err == nil {
+			absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
+			if absRegex.MatchString(ds) {
+				return string(ds)
+			}
+		}
+		os.Exit(1)
+	}
+	return ""
+}
+
 func decryptString(cryptoText string, keyString string) (plainTextString string, err error) {
 	encrypted, err := base64.URLEncoding.DecodeString(cryptoText)
 	if err != nil {
@@ -173,7 +211,7 @@ func decryptString(cryptoText string, keyString string) (plainTextString string,
 		return "", err
 	}
 	decryptedStr := string(decrypted)
-	if decryptedStr != "" && decryptedStr[0:1] != "[" {
+	if decryptedStr[0:1] != "[" && decryptedStr[0:1] != "2" {
 		os.Exit(1)
 	}
 	return decryptedStr, nil
