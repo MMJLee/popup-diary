@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
-	"math/big"
+	"math/rand"
 	"os"
 	"os/exec"
 	"regexp"
@@ -57,9 +57,8 @@ var times [12]time.Time = [12]time.Time{
 }
 
 func main() {
-	// READ PASS KEY
 	clearTerminal()
-	pPrint("Popup-Diary - please enter your pass key\n", bwhite+blink)
+	pPrint("Popup-Diary - Enter your pass key\n", bwhite)
 	pPrint("> ", bwhite+blink)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
@@ -72,7 +71,7 @@ func main() {
 	}
 
 	// READ PAST ENTRIES
-	pPrint("Popup-Diary", bwhite+blink)
+	pPrint("Popup-Diary\n", bwhite)
 	for i, time := range times {
 		if start.Before(time) {
 			entryTime := time.Format("2006-01-02")
@@ -80,7 +79,7 @@ func main() {
 				printFile(calculateHeader(now, entryTime), b, passKey)
 			} else {
 				if i == 11 { // TODAY'S ENTRY
-					pPrint(calculateHeader(now, entryTime), bwhite)
+					pPrint("\n"+calculateHeader(now, entryTime), colors[rand.Intn(len(colors))])
 				}
 			}
 		}
@@ -96,22 +95,29 @@ func main() {
 	absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
 	relRegex := regexp.MustCompile(`^([0-9]{1,}[dwmyDWMY])+$`)         // #Yy#Mm#Ww#Dd
 	for {
-		if err != nil {
-			log.Fatalf("Error creating random int: %v", err)
-		}
 		now = time.Now()
-		pPrint(now.Format("[3:04 PM] "), blink)
-
+		pPrint("> ", blink)
 		scanner.Scan()
 		message := scanner.Text()
 		if strings.TrimSpace(message) == "" {
 			break
-		} else if strings.ToUpper(message) == "HELP" {
+		} else if strings.ToUpper(message) == "HELP" { // GET HELP
 			printHelp()
-		} else if strings.ToUpper(message) == "PROMPT" {
-			prompt := getPrompt()
-			pPrint("\nPrompt: "+prompt+"\n", bwhite)
-			writeToFile(file, "Prompt: "+prompt, passKey)
+		} else if strings.ToUpper(message) == "PROMPT" { // GET RANDOM PROMPT
+			var prompt string
+			for {
+				prompt = getPrompt()
+				pPrint("[ PROMPT ] "+prompt+"\n", bwhite)
+				pPrint("(Enter for a new prompt)\n", bwhite)
+				pPrint("> ", blink)
+				scanner.Scan()
+				message := scanner.Text()
+				if strings.TrimSpace(message) != "" {
+					writePromptToFile(file, prompt, passKey)
+					writeEntryToFile(file, message, passKey)
+					break
+				}
+			}
 		} else if absRegex.MatchString(message) { // GET ENTRY BY ABSOLUTE TIME
 			if b, err := os.ReadFile(message + ".txt"); err == nil {
 				printFile(calculateHeader(now, message), b, passKey)
@@ -122,14 +128,20 @@ func main() {
 				printFile(calculateHeader(now, t), b, passKey)
 			}
 		} else {
-			writeToFile(file, message, passKey)
+			writeEntryToFile(file, message, passKey)
 		}
 	}
 	os.Exit(0)
 }
 
+func writeEntryToFile(file *os.File, message string, passKey string) {
+	writeToFile(file, time.Now().Format("[03:04 PM] ")+message, passKey)
+}
+func writePromptToFile(file *os.File, message string, passKey string) {
+	writeToFile(file, "[ PROMPT ] "+message, passKey)
+}
 func writeToFile(file *os.File, message string, passKey string) {
-	if eb, err := encryptString(time.Now().Format("[3:04 PM] ")+message, passKey); err == nil { // WRITE TO FILE
+	if eb, err := encryptString(message, passKey); err == nil { // WRITE TO FILE
 		if _, err = file.WriteString(eb + "\n"); err != nil {
 			log.Fatalf("Error writing to file: %v", err)
 		}
@@ -137,13 +149,12 @@ func writeToFile(file *os.File, message string, passKey string) {
 }
 
 func printFile(header string, content []byte, passKey string) {
-	randomIndex, err := rand.Int(rand.Reader, big.NewInt(12))
-	if err != nil {
-		log.Fatalf("Error creating random int: %v", err)
-	}
-	pPrint("\n"+header, colors[randomIndex.Int64()])
+	pPrint(header, colors[rand.Intn(len(colors))])
 	for _, line := range strings.Split(string(content), "\n") {
 		if ds, err := decryptString(line, passKey); err == nil {
+			if ds[0:1] != "[" && ds[10:11] != "]" {
+				os.Exit(1)
+			}
 			index := strings.Index(ds, "]") + 1
 			pPrint(ds[:index], grey)
 			pPrint(ds[index:]+"\n", white)
@@ -185,11 +196,11 @@ func calculateHeader(now time.Time, dateStr string) string {
 	switch {
 	case days == 0:
 		token = "TODAY"
-	case days%365 < 1:
+	case days%365 <= 1:
 		token = strconv.Itoa(days/365) + "Y"
-	case days%30 < 1:
+	case days%30 <= 1:
 		token = strconv.Itoa(days/30) + "M"
-	case days%7 < 1:
+	case days%7 <= 1:
 		token = strconv.Itoa(days/7) + "W"
 	default:
 		token = strconv.Itoa(days) + "D"
@@ -261,7 +272,7 @@ func encryptAES(key, data []byte) ([]byte, error) {
 	iv := output[:aes.BlockSize]
 	encrypted := output[aes.BlockSize:]
 	// populate the IV slice with random data.
-	if _, err = io.ReadFull(rand.Reader, iv); err != nil {
+	if _, err = io.ReadFull(crand.Reader, iv); err != nil {
 		return nil, err
 	}
 	stream := cipher.NewCFBEncrypter(block, iv)
@@ -282,11 +293,7 @@ func decryptString(cryptoText string, keyString string) (plainTextString string,
 	if err != nil {
 		return "", err
 	}
-	decryptedStr := string(decrypted)
-	if decryptedStr[0:1] != "[" && decryptedStr[0:1] != "2" {
-		os.Exit(1)
-	}
-	return decryptedStr, nil
+	return string(decrypted), nil
 }
 
 func decryptAES(key, data []byte) ([]byte, error) {
@@ -312,11 +319,12 @@ func pPrint(text string, color string) {
 }
 
 func printHelp() {
-	pPrint("\nenter on a new line to exit", bwhite)
+	pPrint("\nPress enter on a new line to exit", bwhite)
 	pPrint("\nYYYY-MM-DD ex: 2024-04-20 for absolute search", bwhite)
 	pPrint("\n##dD/wW/mM/yY ex: 24D, 3M for relative search", bwhite)
-	pPrint("\nrelative search can be chained ex: 2W2D, evaluated left to right", bwhite)
-	pPrint("\ndelete all text files in directory to restart your diary\n", bwhite)
+	pPrint("\nRelative searchs can be chained ex: 2W2D, evaluated left to right", bwhite)
+	pPrint("\nPrompt to get a prompt to write about", bwhite)
+	pPrint("\nDelete all text files in directory to restart your diary\n", bwhite)
 }
 
 func getPrompt() string {
@@ -342,9 +350,5 @@ func getPrompt() string {
 		"What is a hobby you enjoy?",
 		"Write about a time you felt calm and at peace.",
 	}
-	randomIndex, err := rand.Int(rand.Reader, big.NewInt(int64(len(prompts))))
-	if err != nil {
-		log.Fatalf("Error creating random int: %v", err)
-	}
-	return prompts[randomIndex.Int64()]
+	return prompts[rand.Intn(len(prompts))]
 }
