@@ -20,6 +20,8 @@ import (
 	"time"
 )
 
+const help = "help"
+const prompt = "prompt"
 const reset = "\033[0m"
 const blink = "\033[6m"
 const red = "\033[31m"
@@ -41,7 +43,7 @@ const bwhite = "\033[97m"
 var colors [12]string = [12]string{red, green, yellow, blue, magenta, cyan, bred, bgreen, byellow, bblue, bmagenta, bcyan}
 
 var now time.Time = time.Now()
-var times [12]time.Time = [12]time.Time{
+var times [11]time.Time = [11]time.Time{
 	now.AddDate(0, 0, -18249),
 	now.AddDate(0, 0, -14602),
 	now.AddDate(0, 0, -7301),
@@ -53,7 +55,6 @@ var times [12]time.Time = [12]time.Time{
 	now.AddDate(0, 0, -28),
 	now.AddDate(0, 0, -7),
 	now.AddDate(0, 0, -1),
-	now,
 }
 
 func main() {
@@ -72,23 +73,21 @@ func main() {
 
 	// READ PAST ENTRIES
 	pPrint("Popup-Diary\n", bwhite)
-	for i, time := range times {
+	for _, time := range times {
 		if start.Before(time) {
-			entryTime := time.Format("2006-01-02")
-			if b, err := os.ReadFile(entryTime + ".txt"); err == nil {
-				printFile(calculateHeader(now, entryTime), b, passKey)
-			} else {
-				if i == 11 { // TODAY'S ENTRY
-					pPrint("\n"+calculateHeader(now, entryTime), colors[rand.Intn(len(colors))])
-				}
-			}
+			readTxt(time.Format("2006-01-02"), passKey)
 		}
 	}
 
+	// READ TODAY'S ENTRY
+	nowTime := now.Format("2006-01-02")
+	b, _ := os.ReadFile(nowTime + ".txt")
+	printFile(calcHeader(now, nowTime), b, passKey)
+
 	// OPEN TODAY'S ENTRY
-	file, err := os.OpenFile(now.Format("2006-01-02")+".txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(nowTime+".txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("Error opening file: %v", err)
+		log.Panicf("main: error opening today's txt: %v", err)
 	}
 	defer file.Close()
 
@@ -99,11 +98,12 @@ func main() {
 		pPrint("> ", blink)
 		scanner.Scan()
 		message := scanner.Text()
-		if strings.TrimSpace(message) == "" {
+
+		if strings.TrimSpace(message) == "" { // EXIT
 			break
-		} else if strings.ToUpper(message) == "HELP" { // GET HELP
+		} else if strings.ToLower(message) == help { // GET HELP
 			printHelp()
-		} else if strings.ToUpper(message) == "PROMPT" { // GET RANDOM PROMPT
+		} else if strings.ToLower(message) == prompt { // GET RANDOM PROMPT
 			var prompt string
 			for {
 				prompt = getPrompt()
@@ -119,14 +119,10 @@ func main() {
 				}
 			}
 		} else if absRegex.MatchString(message) { // GET ENTRY BY ABSOLUTE TIME
-			if b, err := os.ReadFile(message + ".txt"); err == nil {
-				printFile(calculateHeader(now, message), b, passKey)
-			}
+			readTxt(message, passKey)
 		} else if relRegex.MatchString(message) { // GET ENTRY BY RELATIVE TIME
-			t := parseTimeToken(now, message).Format("2006-01-02")
-			if b, err := os.ReadFile(t + ".txt"); err == nil {
-				printFile(calculateHeader(now, t), b, passKey)
-			}
+			t := parseToken(now, message).Format("2006-01-02")
+			readTxt(t, passKey)
 		} else {
 			writeEntryToFile(file, message, passKey)
 		}
@@ -141,28 +137,33 @@ func writePromptToFile(file *os.File, message string, passKey string) {
 	writeToFile(file, "[ PROMPT ] "+message, passKey)
 }
 func writeToFile(file *os.File, message string, passKey string) {
-	if eb, err := encryptString(message, passKey); err == nil { // WRITE TO FILE
-		if _, err = file.WriteString(eb + "\n"); err != nil {
-			log.Fatalf("Error writing to file: %v", err)
-		}
+	es := encryptString(message, passKey)
+	if _, err := file.WriteString(es + "\n"); err != nil {
+		log.Panicf("writeToFile: error writing to file: %v", err)
 	}
 }
 
 func printFile(header string, content []byte, passKey string) {
 	pPrint(header, colors[rand.Intn(len(colors))])
 	for _, line := range strings.Split(string(content), "\n") {
-		if ds, err := decryptString(line, passKey); err == nil {
-			if ds[0:1] != "[" && ds[10:11] != "]" {
-				os.Exit(1)
-			}
-			index := strings.Index(ds, "]") + 1
-			pPrint(ds[:index], grey)
-			pPrint(ds[index:]+"\n", white)
+		ds := decryptString(line, passKey)
+		if ds != "" && ds[0:1] != "[" && ds[10:11] != "]" {
+			log.Panic("printFile: wrong decryption")
 		}
+		index := strings.Index(ds, "]") + 1
+		pPrint(ds[:index], grey)
+		pPrint(ds[index:]+"\n", white)
 	}
 }
+func readTxt(fileName string, passKey string) {
+	b, err := os.ReadFile(fileName + ".txt")
+	if err != nil {
+		log.Panicf("readTxt: error reading txt file: %v", err)
+	}
+	printFile(calcHeader(now, fileName), b, passKey)
+}
 
-func parseTimeToken(now time.Time, tokenStr string) time.Time {
+func parseToken(now time.Time, tokenStr string) time.Time {
 	r := regexp.MustCompile(`([0-9]{1,})([dwmyDWMY])`)
 	matches := r.FindAllString(tokenStr, -1)
 	years, months, days := 0, 0, 0
@@ -170,7 +171,7 @@ func parseTimeToken(now time.Time, tokenStr string) time.Time {
 		unit := token[len(token)-1:]
 		qty, err := strconv.Atoi(token[:len(token)-1])
 		if err != nil {
-			log.Fatalf("Error parsing time token: %v", err)
+			log.Panicf("parseToken: error parsing quantity: %v", err)
 		}
 		switch unit {
 		case "Y", "y":
@@ -186,10 +187,10 @@ func parseTimeToken(now time.Time, tokenStr string) time.Time {
 	return now.AddDate(years, months, days)
 }
 
-func calculateHeader(now time.Time, dateStr string) string {
+func calcHeader(now time.Time, dateStr string) string {
 	then, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
-		log.Fatalf("Error calculating time token: %v", err)
+		log.Panicf("calcHeader: error parsing time string: %v", err)
 	}
 	days := int(now.Sub(then).Hours() / 24)
 	var token string
@@ -212,7 +213,7 @@ func clearTerminal() {
 	var cmd *exec.Cmd
 	switch myOS := runtime.GOOS; myOS {
 	case "darwin":
-		os.Exit(1)
+		log.Panic("clearTerminal: unsupported OS")
 	case "linux":
 		cmd = exec.Command("clear")
 	default:
@@ -225,88 +226,72 @@ func clearTerminal() {
 func createKey(now time.Time, passKey string) time.Time {
 	file, err := os.OpenFile("start.txt", os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("Error opening file: %v", err)
+		log.Panicf("createKey: error opening start.txt: %v", err)
 	}
 	defer file.Close()
-	if eb, err := encryptString(now.Format("2006-01-02"), passKey); err == nil { // WRITE TO FILE
-		if _, err = file.WriteString(eb + "\n"); err != nil {
-			log.Fatalf("Error writing to file: %v", err)
-		}
+	es := encryptString(now.Format("2006-01-02"), passKey)
+	if _, err = file.WriteString(es + "\n"); err != nil {
+		log.Panicf("createKey: error writing to file: %v", err)
 	}
 	return now
 }
 
 func verifyKey(passKey string) time.Time {
-	if b, err := os.ReadFile("start.txt"); err == nil {
-		if ds, err := decryptString(string(b), passKey); err == nil {
-			absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
-			if absRegex.MatchString(ds) {
-				then, err := time.Parse("2006-01-02", string(ds))
-				if err != nil {
-					log.Fatalf("Error parsing start time: %v", err)
-				}
-				return then
-			}
+	b, err := os.ReadFile("start.txt")
+	if err != nil {
+		log.Panicf("verifyKey: error reading start.txt: %v", err)
+	}
+	ds := decryptString(string(b), passKey)
+	absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
+	if absRegex.MatchString(ds) {
+		then, err := time.Parse("2006-01-02", string(ds))
+		if err != nil {
+			log.Panicf("verifyKey: error parsing key time: %v", err)
 		}
-		os.Exit(1)
+		return then
+	} else {
+		log.Panic("verifyKey: error matching key time")
 	}
 	return time.Time{}
 }
 
-func encryptString(plainText string, keyString string) (cipherTextString string, err error) {
-	key := hashTo32Bytes(keyString)
-	encrypted, err := encryptAES(key, []byte(plainText))
+func encryptString(str string, key string) string {
+	block, err := aes.NewCipher(hashTo32Bytes(key))
 	if err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(encrypted), nil
-}
-
-func encryptAES(key, data []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
+		log.Panicf("encryptString: error creating cipher: %v", err)
 	}
 	// create two 'windows' in to the output slice.
-	output := make([]byte, aes.BlockSize+len(data))
+	output := make([]byte, aes.BlockSize+len([]byte(str)))
 	iv := output[:aes.BlockSize]
 	encrypted := output[aes.BlockSize:]
 	// populate the IV slice with random data.
 	if _, err = io.ReadFull(crand.Reader, iv); err != nil {
-		return nil, err
+		log.Panicf("encryptString: error reading random data: %v", err)
 	}
 	stream := cipher.NewCFBEncrypter(block, iv)
 	// note that encrypted is still a window in to the output slice
-	stream.XORKeyStream(encrypted, data)
-	return output, nil
+	stream.XORKeyStream(encrypted, []byte(str))
+	return base64.URLEncoding.EncodeToString(output)
 }
 
-func decryptString(cryptoText string, keyString string) (plainTextString string, err error) {
-	encrypted, err := base64.URLEncoding.DecodeString(cryptoText)
+func decryptString(str string, key string) string {
+	encrypted, err := base64.URLEncoding.DecodeString(str)
 	if err != nil {
-		return "", err
+		log.Panicf("decryptString: error decoding string: %v", err)
 	}
 	if len(encrypted) < aes.BlockSize {
-		return "", fmt.Errorf("cipherText too short. It decodes to %v bytes but the minimum length is 16", len(encrypted))
+		return ""
 	}
-	decrypted, err := decryptAES(hashTo32Bytes(keyString), encrypted)
-	if err != nil {
-		return "", err
-	}
-	return string(decrypted), nil
-}
+	iv := encrypted[:aes.BlockSize]
+	encrypted = encrypted[aes.BlockSize:]
 
-func decryptAES(key, data []byte) ([]byte, error) {
-	iv := data[:aes.BlockSize]
-	data = data[aes.BlockSize:]
-
-	block, err := aes.NewCipher(key)
+	block, err := aes.NewCipher(hashTo32Bytes(key))
 	if err != nil {
-		return nil, err
+		log.Panicf("decryptString: error creating cipher: %v", err)
 	}
 	stream := cipher.NewCFBDecrypter(block, iv)
-	stream.XORKeyStream(data, data)
-	return data, nil
+	stream.XORKeyStream(encrypted, encrypted)
+	return string(encrypted)
 }
 
 func hashTo32Bytes(input string) []byte {
