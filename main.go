@@ -38,14 +38,26 @@ const bmagenta = "\033[95m"
 const bcyan = "\033[96m"
 const bwhite = "\033[97m"
 
-type Entry struct {
-	day  string
-	time time.Time
+var colors [12]string = [12]string{red, green, yellow, blue, magenta, cyan, bred, bgreen, byellow, bblue, bmagenta, bcyan}
+
+var now time.Time = time.Now()
+var times [12]time.Time = [12]time.Time{
+	now.AddDate(0, 0, -18249),
+	now.AddDate(0, 0, -14602),
+	now.AddDate(0, 0, -7301),
+	now.AddDate(0, 0, -3647),
+	now.AddDate(0, 0, -1827),
+	now.AddDate(0, 0, -1092),
+	now.AddDate(0, 0, -728),
+	now.AddDate(0, 0, -364),
+	now.AddDate(0, 0, -28),
+	now.AddDate(0, 0, -7),
+	now.AddDate(0, 0, -1),
+	now,
 }
 
 func main() {
-	now := time.Now()
-
+	// READ PASS KEY
 	clearTerminal()
 	pPrint("Popup-Diary - please enter your pass key\n", bwhite+blink)
 	pPrint("> ", bwhite+blink)
@@ -56,32 +68,19 @@ func main() {
 
 	start := verifyKey(passKey)
 	if start.IsZero() {
-		createKey(now, passKey)
-		start = now
+		start = createKey(now, passKey)
 	}
-
-	entries := setupEntries(now)
-	colors := [12]string{red, green, yellow, blue, magenta, cyan, bred, bgreen, byellow, bblue, bmagenta, bcyan}
 
 	// READ PAST ENTRIES
 	pPrint("Popup-Diary", bwhite+blink)
-	for i, entry := range entries {
-		if start.Before(entry.time) {
-			randomIndex, err := rand.Int(rand.Reader, big.NewInt(12))
-			if err != nil {
-				log.Fatalf("Error creating random int: %v", err)
-			}
-			entryTime := entry.time.Format("2006-01-02")
+	for i, time := range times {
+		if start.Before(time) {
+			entryTime := time.Format("2006-01-02")
 			if b, err := os.ReadFile(entryTime + ".txt"); err == nil {
-				pPrint("\n"+entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
-				for _, line := range strings.Split(string(b), "\n") {
-					if ds, err := decryptString(line, passKey); err == nil {
-						printLine(ds)
-					}
-				}
+				printFile(calculateHeader(now, entryTime), b, passKey)
 			} else {
-				if i == 11 {
-					pPrint(entryTime+" ("+entry.day+")\n", colors[randomIndex.Int64()])
+				if i == 11 { // TODAY'S ENTRY
+					pPrint(calculateHeader(now, entryTime), bwhite)
 				}
 			}
 		}
@@ -97,52 +96,105 @@ func main() {
 	absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
 	relRegex := regexp.MustCompile(`^([0-9]{1,}[dwmyDWMY])+$`)         // #Yy#Mm#Ww#Dd
 	for {
-		randomIndex, err := rand.Int(rand.Reader, big.NewInt(12))
 		if err != nil {
 			log.Fatalf("Error creating random int: %v", err)
 		}
 		now = time.Now()
-		msgTime := now.Format("[3:04 PM] ")
-		pPrint(msgTime, blink)
+		pPrint(now.Format("[3:04 PM] "), blink)
 
 		scanner.Scan()
 		message := scanner.Text()
 		if strings.TrimSpace(message) == "" {
 			break
 		} else if strings.ToUpper(message) == "HELP" {
-			pPrint("\nenter on a new line to exit", bwhite)
-			pPrint("\nYYYY-MM-DD ex: 2024-04-20 for absolute search", bwhite)
-			pPrint("\n##dD/wW/mM/yY ex: 24D, 3M for relative search", bwhite)
-			pPrint("\nrelative search can be chained ex: 2W2D, evaluated left to right", bwhite)
-			pPrint("\ndelete all text files in directory to restart your diary\n", bwhite)
+			printHelp()
+		} else if strings.ToUpper(message) == "PROMPT" {
+			prompt := getPrompt()
+			pPrint("\nPrompt: "+prompt+"\n", bwhite)
+			writeToFile(file, "Prompt: "+prompt, passKey)
 		} else if absRegex.MatchString(message) { // GET ENTRY BY ABSOLUTE TIME
-			t := calculateTimeToken(now, message)
 			if b, err := os.ReadFile(message + ".txt"); err == nil {
-				pPrint("\n"+message+" ("+t+")\n", colors[randomIndex.Int64()])
-				lines := strings.Split(string(b), "\n")
-				for _, line := range lines {
-					if ds, err := decryptString(line, passKey); err == nil {
-						printLine(ds)
-					}
-				}
+				printFile(calculateHeader(now, message), b, passKey)
 			}
 		} else if relRegex.MatchString(message) { // GET ENTRY BY RELATIVE TIME
 			t := parseTimeToken(now, message).Format("2006-01-02")
 			if b, err := os.ReadFile(t + ".txt"); err == nil {
-				pPrint("\n"+t+" ("+strings.ToUpper(message)+")\n", colors[randomIndex.Int64()])
-				for _, line := range strings.Split(string(b), "\n") {
-					if ds, err := decryptString(line, passKey); err == nil {
-						printLine(ds)
-					}
-				}
+				printFile(calculateHeader(now, t), b, passKey)
 			}
-		} else if eb, err := encryptString(msgTime+message, passKey); err == nil { // WRITE TO FILE
-			if _, err = file.WriteString(eb + "\n"); err != nil {
-				log.Fatalf("Error writing to file: %v", err)
-			}
+		} else {
+			writeToFile(file, message, passKey)
 		}
 	}
 	os.Exit(0)
+}
+
+func writeToFile(file *os.File, message string, passKey string) {
+	if eb, err := encryptString(time.Now().Format("[3:04 PM] ")+message, passKey); err == nil { // WRITE TO FILE
+		if _, err = file.WriteString(eb + "\n"); err != nil {
+			log.Fatalf("Error writing to file: %v", err)
+		}
+	}
+}
+
+func printFile(header string, content []byte, passKey string) {
+	randomIndex, err := rand.Int(rand.Reader, big.NewInt(12))
+	if err != nil {
+		log.Fatalf("Error creating random int: %v", err)
+	}
+	pPrint("\n"+header, colors[randomIndex.Int64()])
+	for _, line := range strings.Split(string(content), "\n") {
+		if ds, err := decryptString(line, passKey); err == nil {
+			index := strings.Index(ds, "]") + 1
+			pPrint(ds[:index], grey)
+			pPrint(ds[index:]+"\n", white)
+		}
+	}
+}
+
+func parseTimeToken(now time.Time, tokenStr string) time.Time {
+	r := regexp.MustCompile(`([0-9]{1,})([dwmyDWMY])`)
+	matches := r.FindAllString(tokenStr, -1)
+	years, months, days := 0, 0, 0
+	for _, token := range matches {
+		unit := token[len(token)-1:]
+		qty, err := strconv.Atoi(token[:len(token)-1])
+		if err != nil {
+			log.Fatalf("Error parsing time token: %v", err)
+		}
+		switch unit {
+		case "Y", "y":
+			years -= qty
+		case "M", "m":
+			months -= qty
+		case "W", "w":
+			days -= 7 * qty
+		case "D", "d":
+			days -= qty
+		}
+	}
+	return now.AddDate(years, months, days)
+}
+
+func calculateHeader(now time.Time, dateStr string) string {
+	then, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		log.Fatalf("Error calculating time token: %v", err)
+	}
+	days := int(now.Sub(then).Hours() / 24)
+	var token string
+	switch {
+	case days == 0:
+		token = "TODAY"
+	case days%365 < 1:
+		token = strconv.Itoa(days/365) + "Y"
+	case days%30 < 1:
+		token = strconv.Itoa(days/30) + "M"
+	case days%7 < 1:
+		token = strconv.Itoa(days/7) + "W"
+	default:
+		token = strconv.Itoa(days) + "D"
+	}
+	return then.Weekday().String()[0:3] + " " + dateStr + " (" + token + ")\n"
 }
 
 func clearTerminal() {
@@ -159,23 +211,7 @@ func clearTerminal() {
 	cmd.Run()
 }
 
-func setupEntries(now time.Time) [12]Entry {
-	today := Entry{"TODAY", now}
-	yesterday := Entry{"1D", now.AddDate(0, 0, -1)}
-	oneWeekAgo := Entry{"1W", now.AddDate(0, 0, -7)}
-	oneMonthAgo := Entry{"1M", now.AddDate(0, 0, -28)}
-	oneYearAgo := Entry{"1Y", now.AddDate(0, 0, -364)}
-	twoYearsAgo := Entry{"2Y", now.AddDate(0, 0, -728)}
-	threeYearsAgo := Entry{"3Y", now.AddDate(0, 0, -1092)}
-	fiveYearsAgo := Entry{"5Y", now.AddDate(0, 0, -1827)}
-	tenYearsAgo := Entry{"10Y", now.AddDate(0, 0, -3647)}
-	twentyYearsAgo := Entry{"20Y", now.AddDate(0, 0, -7301)}
-	thirtyYearsAgo := Entry{"30Y", now.AddDate(0, 0, -14602)}
-	fiftyYearsAgo := Entry{"50Y", now.AddDate(0, 0, -18249)}
-	return [12]Entry{fiftyYearsAgo, thirtyYearsAgo, twentyYearsAgo, tenYearsAgo, fiveYearsAgo, threeYearsAgo, twoYearsAgo, oneYearAgo, oneMonthAgo, oneWeekAgo, yesterday, today}
-}
-
-func createKey(now time.Time, passKey string) {
+func createKey(now time.Time, passKey string) time.Time {
 	file, err := os.OpenFile("start.txt", os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatalf("Error opening file: %v", err)
@@ -186,6 +222,7 @@ func createKey(now time.Time, passKey string) {
 			log.Fatalf("Error writing to file: %v", err)
 		}
 	}
+	return now
 }
 
 func verifyKey(passKey string) time.Time {
@@ -203,6 +240,34 @@ func verifyKey(passKey string) time.Time {
 		os.Exit(1)
 	}
 	return time.Time{}
+}
+
+func encryptString(plainText string, keyString string) (cipherTextString string, err error) {
+	key := hashTo32Bytes(keyString)
+	encrypted, err := encryptAES(key, []byte(plainText))
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(encrypted), nil
+}
+
+func encryptAES(key, data []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	// create two 'windows' in to the output slice.
+	output := make([]byte, aes.BlockSize+len(data))
+	iv := output[:aes.BlockSize]
+	encrypted := output[aes.BlockSize:]
+	// populate the IV slice with random data.
+	if _, err = io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, err
+	}
+	stream := cipher.NewCFBEncrypter(block, iv)
+	// note that encrypted is still a window in to the output slice
+	stream.XORKeyStream(encrypted, data)
+	return output, nil
 }
 
 func decryptString(cryptoText string, keyString string) (plainTextString string, err error) {
@@ -237,87 +302,49 @@ func decryptAES(key, data []byte) ([]byte, error) {
 	return data, nil
 }
 
-func encryptString(plainText string, keyString string) (cipherTextString string, err error) {
-	key := hashTo32Bytes(keyString)
-	encrypted, err := encryptAES(key, []byte(plainText))
-	if err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(encrypted), nil
-}
-
-func encryptAES(key, data []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	// create two 'windows' in to the output slice.
-	output := make([]byte, aes.BlockSize+len(data))
-	iv := output[:aes.BlockSize]
-	encrypted := output[aes.BlockSize:]
-	// populate the IV slice with random data.
-	if _, err = io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, err
-	}
-	stream := cipher.NewCFBEncrypter(block, iv)
-	// note that encrypted is still a window in to the output slice
-	stream.XORKeyStream(encrypted, data)
-	return output, nil
-}
-
 func hashTo32Bytes(input string) []byte {
 	data := sha256.Sum256([]byte(input))
 	return data[0:]
 }
 
-func parseTimeToken(now time.Time, tokenStr string) time.Time {
-	r := regexp.MustCompile(`([0-9]{1,})([dwmyDWMY])`)
-	matches := r.FindAllString(tokenStr, -1)
-	years, months, days := 0, 0, 0
-	for _, token := range matches {
-		unit := token[len(token)-1:]
-		qty, err := strconv.Atoi(token[:len(token)-1])
-		if err != nil {
-			log.Fatalf("Error parsing time token: %v", err)
-		}
-		switch unit {
-		case "Y", "y":
-			years -= qty
-		case "M", "m":
-			months -= qty
-		case "W", "w":
-			days -= 7 * qty
-		case "D", "d":
-			days -= qty
-		}
-	}
-	return now.AddDate(years, months, days)
-}
-
-func calculateTimeToken(now time.Time, dateStr string) string {
-	then, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		log.Fatalf("Error calculating time token: %v", err)
-	}
-	days := int(now.Sub(then).Hours() / 24)
-	switch {
-	case days%365 < 1:
-		return strconv.Itoa(days/365) + "Y"
-	case days%30 < 1:
-		return strconv.Itoa(days/30) + "M"
-	case days%7 < 1:
-		return strconv.Itoa(days/7) + "W"
-	default:
-		return strconv.Itoa(days) + "D"
-	}
-}
-
-func printLine(line string) {
-	index := strings.Index(line, "]") + 1
-	pPrint(line[:index], grey)
-	pPrint(line[index:]+"\n", white)
-}
-
 func pPrint(text string, color string) {
 	fmt.Print(color + text + reset)
+}
+
+func printHelp() {
+	pPrint("\nenter on a new line to exit", bwhite)
+	pPrint("\nYYYY-MM-DD ex: 2024-04-20 for absolute search", bwhite)
+	pPrint("\n##dD/wW/mM/yY ex: 24D, 3M for relative search", bwhite)
+	pPrint("\nrelative search can be chained ex: 2W2D, evaluated left to right", bwhite)
+	pPrint("\ndelete all text files in directory to restart your diary\n", bwhite)
+}
+
+func getPrompt() string {
+	var prompts = []string{
+		"What are three things that made you smile today?",
+		"What is a challenge you faced this week and how did you overcome it?",
+		"What is a goal you have for the next month?",
+		"Write about a time you felt proud of yourself.",
+		"What is something you are looking forward to?",
+		"What is a lesson you learned this year?",
+		"Write about a person who has inspired you.",
+		"What is a quality you admire in others?",
+		"What is a quality you admire in yourself?",
+		"What is something you wish you had done differently?",
+		"Write about a place that holds special meaning to you.",
+		"What is a book or movie that has impacted you?",
+		"What is a risk you took and what was the outcome?",
+		"Write about a time you felt grateful.",
+		"What is a skill you want to learn?",
+		"What is a memory that makes you happy?",
+		"Write about a time you felt brave.",
+		"What is a tradition you enjoy?",
+		"What is a hobby you enjoy?",
+		"Write about a time you felt calm and at peace.",
+	}
+	randomIndex, err := rand.Int(rand.Reader, big.NewInt(int64(len(prompts))))
+	if err != nil {
+		log.Fatalf("Error creating random int: %v", err)
+	}
+	return prompts[randomIndex.Int64()]
 }
