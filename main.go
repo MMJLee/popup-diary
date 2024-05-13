@@ -7,6 +7,7 @@ import (
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -39,28 +40,28 @@ const bblue = "\033[94m"
 const bmagenta = "\033[95m"
 const bcyan = "\033[96m"
 const bwhite = "\033[97m"
+const spacing = ""
 
 var colors [12]string = [12]string{red, green, yellow, blue, magenta, cyan, bred, bgreen, byellow, bblue, bmagenta, bcyan}
 
 var now time.Time = time.Now()
 var times [11]time.Time = [11]time.Time{
-	now.AddDate(0, 0, -18249),
-	now.AddDate(0, 0, -14602),
-	now.AddDate(0, 0, -7301),
-	now.AddDate(0, 0, -3647),
-	now.AddDate(0, 0, -1827),
-	now.AddDate(0, 0, -1092),
-	now.AddDate(0, 0, -728),
-	now.AddDate(0, 0, -364),
-	now.AddDate(0, 0, -28),
-	now.AddDate(0, 0, -7),
-	now.AddDate(0, 0, -1),
+	now.AddDate(-20, 0, 0), // 20 YEARS AGO
+	now.AddDate(-10, 0, 0), // 10 YEARS AGO
+	now.AddDate(-5, 0, 0),  // 5 YEARS AGO
+	now.AddDate(-3, 0, 0),  // 3 YEARS AGO
+	now.AddDate(-2, 0, 0),  // 2 YEARS AGO
+	now.AddDate(-1, 0, 0),  // 1 YEARS AGO
+	now.AddDate(0, -6, 0),  // 6 MONTHS AGO
+	now.AddDate(0, -3, 0),  // 3 MONTHS AGO
+	now.AddDate(0, -1, 0),  // 1 MONTH AGO
+	now.AddDate(0, 0, -7),  // 1 WEEK AGO
+	now.AddDate(0, 0, -1),  // YESTERDAY
 }
 
 func main() {
 	clearTerminal()
-	pPrint("Popup-Diary - Enter your pass key\n", bwhite)
-	pPrint("> ", bwhite+blink)
+	pPrint("Popup-Diary - enter your pass key"+spacing+"\n> ", bwhite+blink)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
 	passKey := strings.TrimSpace(scanner.Text())
@@ -70,9 +71,8 @@ func main() {
 	if start.IsZero() {
 		start = createKey(now, passKey)
 	}
-
 	// READ PAST ENTRIES
-	pPrint("Popup-Diary\n", bwhite)
+	pPrint("Popup-Diary\n"+spacing, bwhite)
 	for _, time := range times {
 		if start.Before(time) {
 			readTxt(time.Format("2006-01-02"), passKey)
@@ -82,7 +82,7 @@ func main() {
 	// READ TODAY'S ENTRY
 	nowTime := now.Format("2006-01-02")
 	b, _ := os.ReadFile(nowTime + ".txt")
-	printFile(calcHeader(now, nowTime), b, passKey)
+	printText(calcHeader(now, nowTime), b, passKey)
 
 	// OPEN TODAY'S ENTRY
 	file, err := os.OpenFile(nowTime+".txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -90,9 +90,8 @@ func main() {
 		log.Panicf("main: error opening today's txt: %v", err)
 	}
 	defer file.Close()
-
-	absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
-	relRegex := regexp.MustCompile(`^([0-9]{1,}[dwmyDWMY])+$`)         // #Yy#Mm#Ww#Dd
+	absRegex := regexp.MustCompile(`^[12][0-9]{3}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
+	relRegex := regexp.MustCompile(`^([0-9]{1,}[dwmyDWMY])+$`)             // #Yy#Mm#Ww#Dd
 	for {
 		now = time.Now()
 		pPrint("> ", blink)
@@ -107,9 +106,9 @@ func main() {
 			var prompt string
 			for {
 				prompt = getPrompt()
-				pPrint("[ PROMPT ] "+prompt+"\n", bwhite)
-				pPrint("(Enter for a new prompt)\n", bwhite)
-				pPrint("> ", blink)
+				pPrint(spacing+"[ PROMPT ] "+prompt, bwhite)
+				pPrint("\n(Enter for a new prompt)", bwhite)
+				pPrint(spacing+"\n> ", blink)
 				scanner.Scan()
 				message := scanner.Text()
 				if strings.TrimSpace(message) != "" {
@@ -119,10 +118,14 @@ func main() {
 				}
 			}
 		} else if absRegex.MatchString(message) { // GET ENTRY BY ABSOLUTE TIME
-			readTxt(message, passKey)
+			if !readTxt(message, passKey) {
+				pPrint(spacing+calcHeader(now, message)+" does not exist\n"+spacing, colors[rand.Intn(len(colors))])
+			}
 		} else if relRegex.MatchString(message) { // GET ENTRY BY RELATIVE TIME
 			t := parseToken(now, message).Format("2006-01-02")
-			readTxt(t, passKey)
+			if !readTxt(t, passKey) {
+				pPrint(spacing+calcHeader(now, t)+" does not exist\n"+spacing, colors[rand.Intn(len(colors))])
+			}
 		} else {
 			writeEntryToFile(file, message, passKey)
 		}
@@ -143,24 +146,32 @@ func writeToFile(file *os.File, message string, passKey string) {
 	}
 }
 
-func printFile(header string, content []byte, passKey string) {
-	pPrint(header, colors[rand.Intn(len(colors))])
-	for _, line := range strings.Split(string(content), "\n") {
+func printText(header string, content []byte, passKey string) {
+	pPrint(spacing+header, colors[rand.Intn(len(colors))])
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
 		ds := decryptString(line, passKey)
 		if ds != "" && ds[0:1] != "[" && ds[10:11] != "]" {
-			log.Panic("printFile: wrong decryption")
+			log.Panic("printText: wrong decryption")
 		}
 		index := strings.Index(ds, "]") + 1
-		pPrint(ds[:index], grey)
-		pPrint(ds[index:]+"\n", white)
+		pPrint("\n"+ds[:index], grey)
+		pPrint(ds[index:], white)
 	}
+	pPrint(spacing, reset)
 }
-func readTxt(fileName string, passKey string) {
+func readTxt(fileName string, passKey string) bool {
 	b, err := os.ReadFile(fileName + ".txt")
 	if err != nil {
-		log.Panicf("readTxt: error reading txt file: %v", err)
+		if errors.Is(err, os.ErrNotExist) {
+			return false
+		} else {
+			log.Panicf("readTxt: error reading txt file: %v", err)
+		}
+	} else {
+		printText(calcHeader(now, fileName), b, passKey)
 	}
-	printFile(calcHeader(now, fileName), b, passKey)
+	return true
 }
 
 func parseToken(now time.Time, tokenStr string) time.Time {
@@ -192,21 +203,58 @@ func calcHeader(now time.Time, dateStr string) string {
 	if err != nil {
 		log.Panicf("calcHeader: error parsing time string: %v", err)
 	}
-	days := int(now.Sub(then).Hours() / 24)
 	var token string
-	switch {
-	case days == 0:
-		token = "TODAY"
-	case days%365 <= 1:
-		token = strconv.Itoa(days/365) + "Y"
-	case days%30 <= 1:
-		token = strconv.Itoa(days/30) + "M"
-	case days%7 <= 1:
-		token = strconv.Itoa(days/7) + "W"
-	default:
-		token = strconv.Itoa(days) + "D"
+	thenYear, thenMonth, thenDay := getDateParts(then)
+	nowYear, nowMonth, nowDay := getDateParts(now)
+	years := nowYear - thenYear
+	months := nowMonth - thenMonth
+	days := nowDay - thenDay
+
+	if days < 0 {
+		months -= 1
+		days += daysIn(thenMonth, thenYear)
 	}
-	return then.Weekday().String()[0:3] + " " + dateStr + " (" + token + ")\n"
+	if months < 0 {
+		years -= 1
+		months += 12
+	}
+
+	if years > 0 {
+		token += strconv.Itoa(years) + "Y"
+	}
+	if months > 0 {
+		token += strconv.Itoa(months) + "M"
+	}
+	if days > 14 {
+		token += strconv.Itoa(days/7) + "W"
+		days %= 7
+	}
+	if days > 0 {
+		token += strconv.Itoa(days) + "D"
+	}
+	if token == "" {
+		token = "TODAY"
+	}
+	return then.Weekday().String()[0:3] + " " + dateStr + " (" + token + ")"
+}
+func getDateParts(date time.Time) (int, int, int) {
+	dateStr := date.Format("2006-01-02")
+	year, err := strconv.Atoi(dateStr[0:4])
+	if err != nil {
+		log.Panicf("calcHeader: error parsing time string: %v", err)
+	}
+	month, err := strconv.Atoi(dateStr[5:7])
+	if err != nil {
+		log.Panicf("calcHeader: error parsing time string: %v", err)
+	}
+	day, err := strconv.Atoi(dateStr[8:10])
+	if err != nil {
+		log.Panicf("calcHeader: error parsing time string: %v", err)
+	}
+	return year, month, day
+}
+func daysIn(month int, year int) int {
+	return time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 func clearTerminal() {
@@ -229,8 +277,7 @@ func createKey(now time.Time, passKey string) time.Time {
 		log.Panicf("createKey: error opening start.txt: %v", err)
 	}
 	defer file.Close()
-	es := encryptString(now.Format("2006-01-02"), passKey)
-	if _, err = file.WriteString(es + "\n"); err != nil {
+	if _, err = file.WriteString(encryptString(now.Format("2006-01-02"), passKey)); err != nil {
 		log.Panicf("createKey: error writing to file: %v", err)
 	}
 	return now
@@ -239,7 +286,11 @@ func createKey(now time.Time, passKey string) time.Time {
 func verifyKey(passKey string) time.Time {
 	b, err := os.ReadFile("start.txt")
 	if err != nil {
-		log.Panicf("verifyKey: error reading start.txt: %v", err)
+		if errors.Is(err, os.ErrNotExist) {
+			return time.Time{}
+		} else {
+			log.Panicf("verifyKey: error reading start.txt: %v", err)
+		}
 	}
 	ds := decryptString(string(b), passKey)
 	absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
@@ -304,12 +355,14 @@ func pPrint(text string, color string) {
 }
 
 func printHelp() {
-	pPrint("\nPress enter on a new line to exit", bwhite)
-	pPrint("\nYYYY-MM-DD ex: 2024-04-20 for absolute search", bwhite)
-	pPrint("\n##dD/wW/mM/yY ex: 24D, 3M for relative search", bwhite)
-	pPrint("\nRelative searchs can be chained ex: 2W2D, evaluated left to right", bwhite)
-	pPrint("\nPrompt to get a prompt to write about", bwhite)
-	pPrint("\nDelete all text files in directory to restart your diary\n", bwhite)
+	pPrint(spacing+"enter/return on a new line to exit", bwhite)
+	pPrint("\ndelete all .txt files in folder to reset your diary", bwhite)
+	pPrint("\n-------------------------COMMANDS-------------------------", bwhite)
+	pPrint("\n`prompt` for a prompt", bwhite)
+	pPrint("\n`YYYY-MM-DD` to absolute search ex: 2024-04-20", bwhite)
+	pPrint("\n`#[D/W/M/Y]` to relative search ex: 4W, 2M, 1Y", bwhite)
+	pPrint("\nrelative search can be chained ex: 1Y2M4W", bwhite)
+	pPrint("\n(evaluated left to right)\n"+spacing, bwhite)
 }
 
 func getPrompt() string {
