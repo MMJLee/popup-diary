@@ -40,7 +40,7 @@ const bblue = "\033[94m"
 const bmagenta = "\033[95m"
 const bcyan = "\033[96m"
 const bwhite = "\033[97m"
-const spacing = ""
+const spacing = "\n"
 
 var colors [12]string = [12]string{red, green, yellow, blue, magenta, cyan, bred, bgreen, byellow, bblue, bmagenta, bcyan}
 
@@ -106,7 +106,8 @@ func main() {
 			var prompt string
 			for {
 				prompt = getPrompt()
-				pPrint(spacing+"[ PROMPT ] "+prompt, bwhite)
+				pPrint(spacing+"[ PROMPT ] ", grey)
+				pPrint(prompt, colors[rand.Intn(6)])
 				pPrint("\n(Enter for a new prompt)", bwhite)
 				pPrint(spacing+"\n> ", blink)
 				scanner.Scan()
@@ -147,16 +148,24 @@ func writeToFile(file *os.File, message string, passKey string) {
 }
 
 func printText(header string, content []byte, passKey string) {
-	pPrint(spacing+header, colors[rand.Intn(len(colors))])
+	pPrint(header, colors[rand.Intn(len(colors))])
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
 		ds := decryptString(line, passKey)
-		if ds != "" && ds[0:1] != "[" && ds[10:11] != "]" {
-			log.Panic("printText: wrong decryption")
+		if ds == "" {
+			pPrint("\n", reset)
+			continue
+		}
+		if ds[0:1] != "[" && ds[10:11] != "]" {
+			log.Panic("printText: error decrypting string")
 		}
 		index := strings.Index(ds, "]") + 1
 		pPrint("\n"+ds[:index], grey)
-		pPrint(ds[index:], white)
+		if ds[2:8] == "PROMPT" {
+			pPrint(ds[index:], colors[rand.Intn(6)])
+		} else {
+			pPrint(ds[index:], white)
+		}
 	}
 	pPrint(spacing, reset)
 }
