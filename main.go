@@ -94,42 +94,38 @@ func main() {
 	relRegex := regexp.MustCompile(`^([0-9]{1,}[dwmyDWMY])+$`)             // #Yy#Mm#Ww#Dd
 	for {
 		now = time.Now()
-		pPrint("> ", blink)
-		scanner.Scan()
-		message := scanner.Text()
-
-		if strings.TrimSpace(message) == "" { // EXIT
+		input := scanInput(scanner)
+		pPrint(spacing, reset)
+		if input == "" { // EXIT
 			break
-		} else if strings.ToLower(message) == help { // GET HELP
+		} else if strings.ToLower(input) == help { // GET HELP
 			printHelp()
-		} else if strings.ToLower(message) == prompt { // GET RANDOM PROMPT
-			var prompt string
+		} else if strings.ToLower(input) == prompt { // GET RANDOM PROMPT
 			for {
-				prompt = getPrompt()
-				pPrint(spacing+"[ PROMPT ] ", grey)
-				pPrint(prompt, colors[rand.Intn(6)])
-				pPrint("\n(Enter for a new prompt)", bwhite)
-				pPrint(spacing+"\n> ", blink)
-				scanner.Scan()
-				message := scanner.Text()
-				if strings.TrimSpace(message) != "" {
+				printPrompt()
+				input = scanInput(scanner)
+				if input == "prompt" {
+					break
+				} else if strings.TrimSpace(input) != "" {
 					writePromptToFile(file, prompt, passKey)
-					writeEntryToFile(file, message, passKey)
+					writeEntryToFile(file, input, passKey)
 					break
 				}
 			}
-		} else if absRegex.MatchString(message) { // GET ENTRY BY ABSOLUTE TIME
-			if !readTxt(message, passKey) {
-				pPrint(spacing+calcHeader(now, message)+" does not exist\n"+spacing, colors[rand.Intn(len(colors))])
+		} else if absRegex.MatchString(input) { // GET ENTRY BY ABSOLUTE TIME
+			if !readTxt(input, passKey) {
+				pPrint(calcHeader(now, input)+" does not exist\n", colors[rand.Intn(len(colors))])
 			}
-		} else if relRegex.MatchString(message) { // GET ENTRY BY RELATIVE TIME
-			t := parseToken(now, message).Format("2006-01-02")
+		} else if relRegex.MatchString(input) { // GET ENTRY BY RELATIVE TIME
+			t := parseToken(now, input).Format("2006-01-02")
 			if !readTxt(t, passKey) {
-				pPrint(spacing+calcHeader(now, t)+" does not exist\n"+spacing, colors[rand.Intn(len(colors))])
+				pPrint(calcHeader(now, t)+" does not exist\n", colors[rand.Intn(len(colors))])
 			}
 		} else {
-			writeEntryToFile(file, message, passKey)
+			writeEntryToFile(file, input, passKey)
+			continue
 		}
+		pPrint(spacing, reset)
 	}
 	os.Exit(0)
 }
@@ -167,7 +163,6 @@ func printText(header string, content []byte, passKey string) {
 			pPrint(ds[index:], white)
 		}
 	}
-	pPrint(spacing, reset)
 }
 func readTxt(fileName string, passKey string) bool {
 	b, err := os.ReadFile(fileName + ".txt")
@@ -359,21 +354,32 @@ func hashTo32Bytes(input string) []byte {
 	return data[0:]
 }
 
+func scanInput(scanner *bufio.Scanner) string {
+	pPrint("> ", blink)
+	scanner.Scan()
+	return strings.TrimSpace(scanner.Text())
+}
+
 func pPrint(text string, color string) {
 	fmt.Print(color + text + reset)
 }
 
 func printHelp() {
-	pPrint(spacing+"enter/return on a new line to exit", bwhite)
+	pPrint("enter/return on a new line to exit", bwhite)
 	pPrint("\ndelete all .txt files in folder to reset your diary", bwhite)
 	pPrint("\n-------------------------COMMANDS-------------------------", bwhite)
-	pPrint("\n`prompt` for a prompt", bwhite)
+	pPrint("\n`prompt` for a prompt, type anything to use the prompt", bwhite)
+	pPrint("\n`prompt` to exit prompt without using a prompt", bwhite)
 	pPrint("\n`YYYY-MM-DD` to absolute search ex: 2024-04-20", bwhite)
 	pPrint("\n`#[D/W/M/Y]` to relative search ex: 4W, 2M, 1Y", bwhite)
 	pPrint("\nrelative search can be chained ex: 1Y2M4W", bwhite)
-	pPrint("\n(evaluated left to right)\n"+spacing, bwhite)
 }
 
+func printPrompt() {
+	pPrint("[ PROMPT ] ", grey)
+	pPrint(getPrompt(), colors[rand.Intn(6)])
+	pPrint("\n(Enter for a new prompt, `prompt` to exit)\n"+spacing, bwhite)
+}
 func getPrompt() string {
 	var prompts = []string{
 		"What are three things that made you smile today?",
@@ -398,4 +404,21 @@ func getPrompt() string {
 		"Write about a time you felt calm and at peace.",
 	}
 	return prompts[rand.Intn(len(prompts))]
+}
+
+// func listEntries() {
+// 	pPrint(ENTRIES, bwhite)
+// }
+
+func ReadCurrentDir() []string {
+	fileInfo, err := os.ReadDir(".")
+	if err != nil {
+		log.Panicf("OSReadDir: error opening current directory: %v", err)
+	}
+	var files []string
+	for _, file := range fileInfo {
+		files = append(files, file.Name())
+	}
+	fmt.Print(files)
+	return files
 }
