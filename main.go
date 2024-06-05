@@ -21,8 +21,6 @@ import (
 	"time"
 )
 
-const help = "help"
-const prompt = "prompt"
 const reset = "\033[0m"
 const blink = "\033[6m"
 const red = "\033[31m"
@@ -61,10 +59,9 @@ var times [11]time.Time = [11]time.Time{
 
 func main() {
 	clearTerminal()
-	pPrint("Popup-Diary - enter your pass key"+spacing+"\n> ", bwhite+blink)
+	pPrint("Popup-Diary - enter your pass key\n"+spacing, bwhite+blink)
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	passKey := strings.TrimSpace(scanner.Text())
+	passKey := scanInput(scanner)
 	clearTerminal()
 
 	start := verifyKey(passKey)
@@ -75,7 +72,7 @@ func main() {
 	pPrint("Popup-Diary\n"+spacing, bwhite)
 	for _, time := range times {
 		if start.Before(time) {
-			readTxt(time.Format("2006-01-02"), passKey)
+			readTxt(now, time.Format("2006-01-02"), passKey, true)
 		}
 	}
 
@@ -90,44 +87,60 @@ func main() {
 		log.Panicf("main: error opening today's txt: %v", err)
 	}
 	defer file.Close()
-	absRegex := regexp.MustCompile(`^[12][0-9]{3}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
-	relRegex := regexp.MustCompile(`^([0-9]{1,}[dwmyDWMY])+$`)             // #Yy#Mm#Ww#Dd
+	pPrint(spacing, reset)
+	prompt := ""
 	for {
 		now = time.Now()
 		input := scanInput(scanner)
-		pPrint(spacing, reset)
 		if input == "" { // EXIT
-			break
-		} else if strings.ToLower(input) == help { // GET HELP
-			printHelp()
-		} else if strings.ToLower(input) == prompt { // GET RANDOM PROMPT
-			for {
-				printPrompt()
-				input = scanInput(scanner)
-				if input == "prompt" {
-					break
-				} else if strings.TrimSpace(input) != "" {
-					writePromptToFile(file, prompt, passKey)
-					writeEntryToFile(file, input, passKey)
-					break
-				}
+			if prompt != "" {
+				prompt = ""
+			} else {
+				break
 			}
-		} else if absRegex.MatchString(input) { // GET ENTRY BY ABSOLUTE TIME
-			if !readTxt(input, passKey) {
-				pPrint(calcHeader(now, input)+" does not exist\n", colors[rand.Intn(len(colors))])
-			}
-		} else if relRegex.MatchString(input) { // GET ENTRY BY RELATIVE TIME
-			t := parseToken(now, input).Format("2006-01-02")
-			if !readTxt(t, passKey) {
-				pPrint(calcHeader(now, t)+" does not exist\n", colors[rand.Intn(len(colors))])
-			}
+		} else if len(input) > 1 && input[0:2] == "--" {
+			lowerInput := strings.Split(strings.ToLower(input[2:]), " ")
+			prompt = handleCommand(now, lowerInput, passKey)
 		} else {
+			if prompt != "" {
+				writePromptToFile(file, prompt, passKey)
+				prompt = ""
+			}
 			writeEntryToFile(file, input, passKey)
+			pPrint(spacing, reset)
 			continue
 		}
 		pPrint(spacing, reset)
 	}
 	os.Exit(0)
+}
+
+func handleCommand(now time.Time, inputArray []string, passKey string) string {
+	var prompt string
+	var target string
+	if inputArray[0] == "help" { // GET HELP
+		printHelp()
+		return ""
+	} else if inputArray[0] == "prompt" { // GET RANDOM PROMPT
+		prompt = printPrompt()
+		return prompt
+	} else if regexp.MustCompile(`^[12][0-9]{3}[-][0-9]{2}[-][0-9]{2}$`).MatchString(inputArray[0]) { // GET ENTRY BY ABSOLUTE TIME YYYY-MM-DD
+		target = inputArray[0]
+	} else if regexp.MustCompile(`^([0-9]{1,}[dwmy])+$`).MatchString(inputArray[0]) { // GET ENTRY BY RELATIVE TIME #Yy#Mm#Ww#Dd
+		target = parseToken(now, inputArray[0], false).Format("2006-01-02")
+	}
+
+	if target != "" {
+		inputLength := len(inputArray)
+		if inputLength == 1 {
+			readTxt(now, target, passKey, false)
+		} else if inputLength == 2 {
+			listTxt(now, target, inputArray[1])
+		} else {
+			pPrint("too many arguments\n", white)
+		}
+	}
+	return ""
 }
 
 func writeEntryToFile(file *os.File, message string, passKey string) {
@@ -164,23 +177,54 @@ func printText(header string, content []byte, passKey string) {
 		}
 	}
 }
-func readTxt(fileName string, passKey string) bool {
-	b, err := os.ReadFile(fileName + ".txt")
+func readTxt(now time.Time, fileName string, passKey string, suppress bool) {
+	binary, err := os.ReadFile(fileName + ".txt")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return false
+			if !suppress {
+				pPrint(calcHeader(now, fileName)+" does not exist\n", colors[rand.Intn(len(colors))])
+			}
+
 		} else {
 			log.Panicf("readTxt: error reading txt file: %v", err)
 		}
 	} else {
-		printText(calcHeader(now, fileName), b, passKey)
+		printText(calcHeader(now, fileName), binary, passKey)
 	}
-	return true
+}
+func listTxt(now time.Time, target string, deviation string) {
+	target_time, err := time.Parse("2006-01-02", target)
+	if err != nil {
+		log.Panicf("listTxt: error parsing target date: %v", err)
+	}
+	if !regexp.MustCompile(`^([0-9]{1,}[dwmy])+$`).MatchString(deviation) {
+		pPrint("invalid token\n", white)
+		return
+	}
+
+	start_date, err := time.Parse("2006-01-02", parseToken(target_time, deviation, false).Format("2006-01-02"))
+	if err != nil {
+		log.Panicf("listTxt: error parsing start date: %v", err)
+	}
+	end_date, err := time.Parse("2006-01-02", parseToken(target_time, deviation, true).Format("2006-01-02"))
+	if err != nil {
+		log.Panicf("listTxt: error parsing end date: %v", err)
+	}
+	fileInfo, err := os.ReadDir(".")
+	if err != nil {
+		log.Panicf("listTxt: error opening current directory: %v", err)
+	}
+	for _, file := range fileInfo {
+		fileName := strings.Split(file.Name(), ".")[0]
+		fileDate, _ := time.Parse("2006-01-02", fileName) // Skip invalid dates
+		if (fileDate.After(start_date) || fileDate.Equal(start_date)) && (fileDate.Before(end_date) || fileDate.Equal(end_date)) {
+			pPrint(calcHeader(now, fileName)+"\n", colors[rand.Intn(len(colors))])
+		}
+	}
 }
 
-func parseToken(now time.Time, tokenStr string) time.Time {
-	r := regexp.MustCompile(`([0-9]{1,})([dwmyDWMY])`)
-	matches := r.FindAllString(tokenStr, -1)
+func parseToken(now time.Time, tokenStr string, add bool) time.Time {
+	matches := regexp.MustCompile(`([0-9]{1,})([dwmyDWMY])`).FindAllString(tokenStr, -1)
 	years, months, days := 0, 0, 0
 	for _, token := range matches {
 		unit := token[len(token)-1:]
@@ -190,16 +234,19 @@ func parseToken(now time.Time, tokenStr string) time.Time {
 		}
 		switch unit {
 		case "Y", "y":
-			years -= qty
+			years += qty
 		case "M", "m":
-			months -= qty
+			months += qty
 		case "W", "w":
-			days -= 7 * qty
+			days += 7 * qty
 		case "D", "d":
-			days -= qty
+			days += qty
 		}
 	}
-	return now.AddDate(years, months, days)
+	if add {
+		return now.AddDate(years, months, days)
+	}
+	return now.AddDate(-years, -months, -days)
 }
 
 func calcHeader(now time.Time, dateStr string) string {
@@ -297,8 +344,7 @@ func verifyKey(passKey string) time.Time {
 		}
 	}
 	ds := decryptString(string(b), passKey)
-	absRegex := regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`) // YYYY-MM-DD
-	if absRegex.MatchString(ds) {
+	if regexp.MustCompile(`^[0-9]{4}[-][0-9]{2}[-][0-9]{2}$`).MatchString(ds) { // YYYY-MM-DD
 		then, err := time.Parse("2006-01-02", string(ds))
 		if err != nil {
 			log.Panicf("verifyKey: error parsing key time: %v", err)
@@ -368,17 +414,20 @@ func printHelp() {
 	pPrint("enter/return on a new line to exit", bwhite)
 	pPrint("\ndelete all .txt files in folder to reset your diary", bwhite)
 	pPrint("\n-------------------------COMMANDS-------------------------", bwhite)
-	pPrint("\n`prompt` for a prompt, type anything to use the prompt", bwhite)
-	pPrint("\n`prompt` to exit prompt without using a prompt", bwhite)
-	pPrint("\n`YYYY-MM-DD` to absolute search ex: 2024-04-20", bwhite)
-	pPrint("\n`#[D/W/M/Y]` to relative search ex: 4W, 2M, 1Y", bwhite)
-	pPrint("\nrelative search can be chained ex: 1Y2M4W", bwhite)
+	pPrint("\n`--prompt` for a prompt, type anything to use the prompt", bwhite)
+	pPrint("\nenter/return on a new line to exit prompt without using a prompt", bwhite)
+	pPrint("\n`--YYYY-MM-DD` to absolute search ex: 2024-04-20", bwhite)
+	pPrint("\n`--#[D/W/M/Y]` to relative search ex: 4W, 2M, 1Y", bwhite)
+	pPrint("\n`#[D/W/M/Y]` argument turn search into list ex: --2024-04-20 2W", bwhite)
+	pPrint("\nrelative search/argument can be chained ex: 1Y2M4W\n", bwhite)
 }
 
-func printPrompt() {
+func printPrompt() string {
+	prompt := getPrompt()
 	pPrint("[ PROMPT ] ", grey)
-	pPrint(getPrompt(), colors[rand.Intn(6)])
-	pPrint("\n(Enter for a new prompt, `prompt` to exit)\n"+spacing, bwhite)
+	pPrint(prompt, colors[rand.Intn(6)])
+	pPrint("\n(Enter for a new prompt, `prompt` to exit)\n", bwhite)
+	return prompt
 }
 func getPrompt() string {
 	var prompts = []string{
@@ -404,21 +453,4 @@ func getPrompt() string {
 		"Write about a time you felt calm and at peace.",
 	}
 	return prompts[rand.Intn(len(prompts))]
-}
-
-// func listEntries() {
-// 	pPrint(ENTRIES, bwhite)
-// }
-
-func ReadCurrentDir() []string {
-	fileInfo, err := os.ReadDir(".")
-	if err != nil {
-		log.Panicf("OSReadDir: error opening current directory: %v", err)
-	}
-	var files []string
-	for _, file := range fileInfo {
-		files = append(files, file.Name())
-	}
-	fmt.Print(files)
-	return files
 }
